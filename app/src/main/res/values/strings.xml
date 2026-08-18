@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Wi-Fi 配置管理器</string>
+    <string name="mode_static">静态 IP</string>
+    <string name="mode_dhcp">DHCP 自动获取</string>
+    <string name="label_ip_address">IP 地址</string>
+    <string name="label_gateway">网关 (Gateway)</string>
+    <string name="label_dns_primary">主 DNS</string>
+    <string name="label_dns_secondary">备用 DNS</string>
+    <string name="label_subnet_prefix">子网前缀长度</string>
+    <string name="btn_save">保存配置</string>
+    <string name="btn_apply">一键应用</string>
+    <string name="btn_switch_dhcp">切换到 DHCP</string>
+    <string name="hint_ip">例如: 192.168.1.100</string>
+    <string name="hint_gateway">例如: 192.168.1.1</string>
+    <string name="hint_dns">例如: 8.8.8.8</string>
+    <string name="hint_subnet">例如: 24</string>
+    <string name="status_idle">就绪</string>
+    <string name="status_applying">正在应用配置…</string>
+    <string name="status_success">配置应用成功！</string>
+    <string name="status_failed">配置应用失败：%1$s</string>
+    <string name="status_root_checking">正在检查 Root 权限…</string>
+    <string name="status_root_granted">Root 权限已获取</string>
+    <string name="status_root_denied">未获取 Root 权限，无法修改网络配置</string>
+    <string name="title_mode_select">选择配置模式</string>
+    <string name="title_current_config">当前已保存配置</string>
+    <string name="label_interface">网络接口</string>
+</resources>

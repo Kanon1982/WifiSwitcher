@@ -1,0 +1,29 @@
+# ------------- Gradle / Android Studio 标准忽略文件 -------------
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties~
+app/release/
+app/debug/
+
+# 编译产物
+**/build/
+*.apk
+*.aab
+*.ap_
+
+# Logs
+*.log
+build_log.txt
+env_check.txt
+
+# Android Studio navigation editor
+navigation.xml~
+
+# Gradle wrapper 验证 (gradle-wrapper.jar 保留，不能忽略！否则别人 clone 完不能构建)
