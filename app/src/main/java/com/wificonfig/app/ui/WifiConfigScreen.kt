@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SettingsEthernet
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Warning
@@ -62,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -103,14 +105,21 @@ import com.wificonfig.app.ui.theme.WarningOrange
 @Composable
 fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val strings by viewModel.appStringsState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
-    // Snackbar 消息收集（不重复 toast）
+    // Snackbar 消息收集
     LaunchedEffect(Unit) {
         viewModel.snackbarFlow.collect { msg ->
-            // 善意提醒是长文，用 Long 停留更久；普通消息用 Short
-            val duration = if (msg.startsWith("💡 小提醒") || msg.contains("系统设置里的 Wi-Fi")) {
+            // 善意提醒是长文（系统设置那条），用 Long；普通用 Short
+            val longMsgHints = listOfNotNull(
+                strings.snackbarSystemSettingsNotice,
+                // 兜底中/英文片段
+                "系统设置里的 Wi-Fi", "System Settings"
+            )
+            val isLong = longMsgHints.any { hint -> hint.isNotBlank() && msg.contains(hint) }
+            val duration = if (isLong) {
                 androidx.compose.material3.SnackbarDuration.Long
             } else {
                 androidx.compose.material3.SnackbarDuration.Short
@@ -140,15 +149,24 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
                             )
                             Spacer(Modifier.size(8.dp))
                             Text(
-                                text = context.getString(com.wificonfig.app.R.string.app_name),
+                                text = strings.topTitle,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp
                             )
                         }
                         Text(
-                            text = "一键改 Wi-Fi 的 IP / DNS · 需要 Root 权限",
+                            text = strings.topSubtitle,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                actions = {
+                    // 语言切换按钮
+                    IconButton(onClick = { viewModel.openLanguageDialog() }) {
+                        Icon(
+                            Icons.Default.Translate,
+                            contentDescription = strings.langButtonDesc
                         )
                     }
                 },
@@ -174,12 +192,14 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
             ) {
                 // ---------- 1. 当前状态（Root + 接口信息，合并成一张卡片） ----------
                 CurrentStatusCard(
+                    strings = strings,
                     uiState = uiState,
                     onRefresh = { viewModel.checkRootAndDetectInterface() }
                 )
 
                 // ---------- 2. 大按钮模式选择（小白友好，自动 vs 手动） ----------
                 ModeSelectorBig(
+                    strings = strings,
                     uiState = uiState,
                     onModeChanged = { viewModel.updateMode(it) }
                 )
@@ -192,6 +212,7 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         StaticFormCard(
+                            strings = strings,
                             uiState = uiState,
                             onIp = { viewModel.updateIp(it) },
                             onSubnet = { viewModel.updateSubnet(it) },
@@ -200,6 +221,7 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
                             onDnsSecondary = { viewModel.updateDnsSecondary(it) }
                         )
                         PresetsCard(
+                            strings = strings,
                             uiState = uiState,
                             onCreate = { viewModel.openCreatePresetDialog() },
                             onRename = { viewModel.openRenamePresetDialog(it) },
@@ -216,22 +238,23 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
                     enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                     exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                 ) {
-                    DhcpHintCard()
+                    DhcpHintCard(strings = strings)
                 }
 
                 // ---------- 4. 主操作按钮栏（保存 + 应用/切换） ----------
                 MainCtaBar(
+                    strings = strings,
                     uiState = uiState,
                     onSave = { viewModel.saveConfig() },
                     onApply = { viewModel.applyCurrentMode() }
                 )
 
                 // ---------- 5. 状态横幅（成功/失败/进行中） ----------
-                StatusBanner(uiState = uiState)
+                StatusBanner(strings = strings, uiState = uiState)
 
                 // ---------- 6. 诊断日志（默认收起；只有有失败命令时用红色醒目提示） ----------
                 if (uiState.lastDiagnostics.isNotEmpty()) {
-                    DiagnosticsCard(uiState = uiState)
+                    DiagnosticsCard(strings = strings, uiState = uiState)
                 }
 
                 Spacer(Modifier.height(14.dp))
@@ -243,27 +266,119 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
         if (dlg != null) {
             when (dlg) {
                 is PresetDialog.CreateNew -> PresetCreateDialog(
+                    strings = strings,
                     onCancel = { viewModel.cancelPresetDialog() },
                     onConfirm = { name -> viewModel.confirmCreatePreset(name) }
                 )
                 is PresetDialog.Rename -> PresetRenameDialog(
+                    strings = strings,
                     currentName = dlg.currentName,
                     onCancel = { viewModel.cancelPresetDialog() },
                     onConfirm = { newName -> viewModel.confirmRenamePreset(dlg.id, newName) }
                 )
                 is PresetDialog.DeleteConfirm -> PresetDeleteDialog(
+                    strings = strings,
                     presetName = dlg.name,
                     onCancel = { viewModel.cancelPresetDialog() },
                     onConfirm = { viewModel.confirmDeletePreset(dlg.id) }
                 )
                 PresetDialog.ClearAll -> PresetClearAllDialog(
+                    strings = strings,
                     count = uiState.presets.size,
                     onCancel = { viewModel.cancelPresetDialog() },
                     onConfirm = { viewModel.confirmClearAllPresets() }
                 )
             }
         }
+
+        // ---------- 语言选择对话框 ----------
+        if (uiState.showLanguageDialog) {
+            LanguageSelectDialog(
+                strings = strings,
+                currentOption = uiState.languageOption,
+                onDismiss = { viewModel.dismissLanguageDialog() },
+                onSelect = { viewModel.selectLanguage(it) }
+            )
+        }
     }
+}
+
+// =====================================================
+//  语言选择对话框（三选一：跟随系统 / 中文 / 英文）
+// =====================================================
+@Composable
+private fun LanguageSelectDialog(
+    strings: AppStrings,
+    currentOption: LanguageOption,
+    onDismiss: () -> Unit,
+    onSelect: (LanguageOption) -> Unit
+) {
+    val options = remember {
+        listOf(
+            Triple(LanguageOption.SYSTEM, strings.langOptSystem, strings.langOptSystemSub),
+            Triple(LanguageOption.ZH, strings.langOptZh, strings.langOptZhSub),
+            Triple(LanguageOption.EN, strings.langOptEn, strings.langOptEnSub)
+        )
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Translate, contentDescription = null) },
+        title = { Text(strings.langTitle) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                options.forEach { (opt, title, sub) ->
+                    val selected = currentOption == opt
+                    Card(
+                        onClick = { onSelect(opt) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (selected)
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            else
+                                MaterialTheme.colorScheme.surface
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = if (selected) 1.5.dp else 0.8.dp,
+                            color = if (selected)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = selected, onClick = { onSelect(opt) })
+                            Spacer(Modifier.size(6.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (sub.isNotBlank()) {
+                                    Text(
+                                        text = sub,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss, shape = RoundedCornerShape(12.dp)) {
+                Text(strings.btnCancel)
+            }
+        }
+    )
 }
 
 // =====================================================
@@ -271,7 +386,11 @@ fun WifiConfigScreen(viewModel: WifiConfigViewModel = viewModel()) {
 // =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CurrentStatusCard(uiState: WifiConfigUiState, onRefresh: () -> Unit) {
+private fun CurrentStatusCard(
+    strings: AppStrings,
+    uiState: WifiConfigUiState,
+    onRefresh: () -> Unit
+) {
     val rootOk = uiState.rootChecked && uiState.rootGranted
     val rootChecking = !uiState.rootChecked ||
             uiState.status is OperationStatus.CheckingRoot ||
@@ -325,21 +444,22 @@ private fun CurrentStatusCard(uiState: WifiConfigUiState, onRefresh: () -> Unit)
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = if (rootChecking) "正在检查 Root 权限…"
-                        else if (rootOk) "Root 权限已就绪 ✓"
-                        else "⚠️ 还没有 Root 权限",
+                        text = when {
+                            rootChecking -> strings.cardRootChecking
+                            rootOk -> strings.cardRootReady
+                            else -> strings.cardRootNotReady
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = if (rootOk) "可以放心修改网络设置啦。"
-                        else "请用 Magisk 等工具给本应用授权 SuperSU，否则改网络不会生效。",
+                        text = if (rootOk) strings.cardRootReadySub else strings.cardRootNotReadySub,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, "刷新网络状态")
+                    Icon(Icons.Default.Refresh, strings.btnRefresh)
                 }
             }
 
@@ -358,15 +478,16 @@ private fun CurrentStatusCard(uiState: WifiConfigUiState, onRefresh: () -> Unit)
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = if (iface.ifName.isBlank()) "未检测到 Wi-Fi" else "当前连接：${iface.ifName}",
+                        text = if (iface.ifName.isBlank()) strings.cardIfaceNotFound
+                        else strings.cardIfaceConnected(iface.ifName),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(Modifier.size(3.dp))
                     val rows = listOf(
-                        "IP 地址" to (iface.currentIp.ifBlank { "—" }),
-                        "网关" to (iface.currentGateway.ifBlank { "—" }),
-                        "DNS" to (iface.currentDns.ifBlank { "—" })
+                        strings.labelIp to (iface.currentIp.ifBlank { "—" }),
+                        strings.labelGateway to (iface.currentGateway.ifBlank { "—" }),
+                        strings.labelDns to (iface.currentDns.ifBlank { "—" })
                     )
                     rows.forEach { (k, v) ->
                         Row(Modifier.fillMaxWidth()) {
@@ -387,7 +508,7 @@ private fun CurrentStatusCard(uiState: WifiConfigUiState, onRefresh: () -> Unit)
                     if (iface.ifName.isBlank()) {
                         Spacer(Modifier.size(4.dp))
                         Text(
-                            text = "👉 请先连接 Wi-Fi，再点右上角 ↻ 刷新一下。",
+                            text = strings.cardIfaceHint,
                             style = MaterialTheme.typography.labelSmall,
                             color = WarningOrange
                         )
@@ -404,6 +525,7 @@ private fun CurrentStatusCard(uiState: WifiConfigUiState, onRefresh: () -> Unit)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModeSelectorBig(
+    strings: AppStrings,
     uiState: WifiConfigUiState,
     onModeChanged: (ConfigMode) -> Unit
 ) {
@@ -419,9 +541,10 @@ private fun ModeSelectorBig(
             icon = Icons.Default.Autorenew,
             iconBg = SuccessGreen.copy(alpha = 0.18f),
             iconTint = SuccessGreen,
-            title = "自动模式",
-            subtitleEn = "DHCP · 推荐",
-            description = "路由器自动帮你配好，最省心"
+            title = strings.modeAutoTitle,
+            subtitleEn = strings.modeAutoSubEn,
+            description = strings.modeAutoDesc,
+            selectedLabel = strings.cardCurrentSelected
         )
         // 右边：静态手动
         ModeCard(
@@ -431,9 +554,10 @@ private fun ModeSelectorBig(
             icon = Icons.Default.SettingsEthernet,
             iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
             iconTint = MaterialTheme.colorScheme.primary,
-            title = "手动模式",
-            subtitleEn = "静态 IP",
-            description = "自己填 IP / 网关 / DNS"
+            title = strings.modeManualTitle,
+            subtitleEn = strings.modeManualSubEn,
+            description = strings.modeManualDesc,
+            selectedLabel = strings.cardCurrentSelected
         )
     }
 }
@@ -449,7 +573,8 @@ private fun ModeCard(
     iconTint: Color,
     title: String,
     subtitleEn: String,
-    description: String
+    description: String,
+    selectedLabel: String
 ) {
     Card(
         modifier = modifier,
@@ -509,7 +634,7 @@ private fun ModeCard(
                     )
                     Spacer(Modifier.size(4.dp))
                     Text(
-                        "当前选择",
+                        selectedLabel,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
@@ -524,7 +649,7 @@ private fun ModeCard(
 //  3a. DHCP 模式下的提示卡片
 // =====================================================
 @Composable
-private fun DhcpHintCard() {
+private fun DhcpHintCard(strings: AppStrings) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -550,12 +675,12 @@ private fun DhcpHintCard() {
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    "选择了「自动模式」",
+                    strings.dhcpCardTitle,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "点下面绿色大按钮，就能一键切回路由器自动分配的网络，什么都不用填。",
+                    strings.dhcpCardDesc,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -569,6 +694,7 @@ private fun DhcpHintCard() {
 // =====================================================
 @Composable
 private fun StaticFormCard(
+    strings: AppStrings,
     uiState: WifiConfigUiState,
     onIp: (String) -> Unit,
     onSubnet: (String) -> Unit,
@@ -603,12 +729,12 @@ private fun StaticFormCard(
                 Spacer(Modifier.size(10.dp))
                 Column {
                     Text(
-                        text = "填写 IP / 网关 / DNS",
+                        text = strings.formTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "带 * 的项必填；不会填可以先点上面的「自动模式」",
+                        strings.formSubtitle,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -618,7 +744,7 @@ private fun StaticFormCard(
             Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             // ---- 第 1 组：IP 地址 + 前缀 ----
-            SectionLabel(title = "① IP 地址", hint = "前缀一般填 24（= 子网掩码 255.255.255.0）")
+            SectionLabel(title = strings.secIpTitle, hint = strings.secIpHint)
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -628,9 +754,9 @@ private fun StaticFormCard(
                     value = uiState.ip,
                     onValueChange = onIp,
                     label = {
-                        Row { Text("IP 地址"); Star() }
+                        Row { Text(strings.labelIp); Star() }
                     },
-                    placeholder = { Text("例: 192.168.1.100") },
+                    placeholder = { Text(strings.hintIp) },
                     modifier = Modifier.weight(3f),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp)
@@ -638,8 +764,8 @@ private fun StaticFormCard(
                 OutlinedTextField(
                     value = uiState.subnetPrefix,
                     onValueChange = onSubnet,
-                    label = { Text("前缀") },
-                    placeholder = { Text("24") },
+                    label = { Text(strings.labelPrefix) },
+                    placeholder = { Text(strings.hintPrefix) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp)
@@ -647,28 +773,28 @@ private fun StaticFormCard(
             }
 
             // ---- 第 2 组：网关 ----
-            SectionLabel(title = "② 网关 Gateway", hint = "一般就是路由器管理页 IP")
+            SectionLabel(title = strings.secGwTitle, hint = strings.secGwHint)
             OutlinedTextField(
                 value = uiState.gateway,
                 onValueChange = onGateway,
                 label = {
-                    Row { Text("网关地址"); Star() }
+                    Row { Text(strings.labelGateway); Star() }
                 },
-                placeholder = { Text("例: 192.168.1.1  或  192.168.0.1  或  192.168.31.1") },
+                placeholder = { Text(strings.hintGateway) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
             )
 
             // ---- 第 3 组：DNS ----
-            SectionLabel(title = "③ DNS", hint = "主 DNS 必需；备用不填也行")
+            SectionLabel(title = strings.secDnsTitle, hint = strings.secDnsHint)
             OutlinedTextField(
                 value = uiState.dnsPrimary,
                 onValueChange = onDnsPrimary,
                 label = {
-                    Row { Text("主 DNS"); Star() }
+                    Row { Text(strings.labelDnsPrimary); Star() }
                 },
-                placeholder = { Text("国内推荐 223.5.5.5(阿里) / 114.114.114.114  国外 8.8.8.8") },
+                placeholder = { Text(strings.hintDnsPrimary) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
@@ -676,8 +802,8 @@ private fun StaticFormCard(
             OutlinedTextField(
                 value = uiState.dnsSecondary,
                 onValueChange = onDnsSecondary,
-                label = { Text("备用 DNS（可选）") },
-                placeholder = { Text("例: 223.6.6.6 / 8.8.4.4") },
+                label = { Text(strings.labelDnsSecondary) },
+                placeholder = { Text(strings.hintDnsSecondary) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
@@ -714,6 +840,7 @@ private fun SectionLabel(title: String, hint: String = "") {
 // =====================================================
 @Composable
 private fun MainCtaBar(
+    strings: AppStrings,
     uiState: WifiConfigUiState,
     onSave: () -> Unit,
     onApply: () -> Unit
@@ -723,8 +850,8 @@ private fun MainCtaBar(
             uiState.status is OperationStatus.LoadingInterface
 
     val applyLabel = when (uiState.mode) {
-        ConfigMode.STATIC -> "立即应用设置"
-        ConfigMode.DHCP -> "一键切回自动模式"
+        ConfigMode.STATIC -> strings.btnApplyStatic
+        ConfigMode.DHCP -> strings.btnApplyDhcp
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -745,13 +872,13 @@ private fun MainCtaBar(
                 ) {
                     Icon(Icons.Default.Save, null)
                     Spacer(Modifier.size(6.dp))
-                    Text("保存设置", fontWeight = FontWeight.SemiBold)
+                    Text(strings.btnSave, fontWeight = FontWeight.SemiBold)
                 }
             }
             // 主按钮：应用 / 切换
             Button(
                 onClick = onApply,
-                modifier = Modifier.weight(if (uiState.mode == ConfigMode.STATIC) 1f else 1f),
+                modifier = Modifier.weight(1f),
                 enabled = !busy,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -774,7 +901,7 @@ private fun MainCtaBar(
                     Spacer(Modifier.size(6.dp))
                 }
                 Text(
-                    if (busy) "处理中，请稍等…" else applyLabel,
+                    if (busy) strings.btnBusy else applyLabel,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -793,7 +920,7 @@ private data class BannerInfo(
 )
 
 @Composable
-private fun StatusBanner(uiState: WifiConfigUiState) {
+private fun StatusBanner(strings: AppStrings, uiState: WifiConfigUiState) {
     val raw: BannerInfo? = when (val s = uiState.status) {
         OperationStatus.Idle -> {
             val msg = uiState.statusMessage
@@ -807,19 +934,19 @@ private fun StatusBanner(uiState: WifiConfigUiState) {
         OperationStatus.LoadingInterface,
         OperationStatus.Applying -> BannerInfo(
             MaterialTheme.colorScheme.primary,
-            uiState.statusMessage.ifBlank { "处理中…" },
+            uiState.statusMessage.ifBlank { strings.bannerProcessing },
             Icons.Default.Refresh, true
         )
         is OperationStatus.RootGranted,
         is OperationStatus.Success -> BannerInfo(
             SuccessGreen,
-            uiState.statusMessage.ifBlank { "成功 ✓" },
+            uiState.statusMessage.ifBlank { strings.bannerSuccess },
             Icons.Default.CheckCircle, false
         )
         is OperationStatus.RootDenied,
         is OperationStatus.Failed -> BannerInfo(
             ErrorRed,
-            uiState.statusMessage.ifBlank { "失败了" },
+            uiState.statusMessage.ifBlank { strings.bannerFailed },
             Icons.Default.Warning, false
         )
         is OperationStatus.Info -> BannerInfo(
@@ -863,14 +990,13 @@ private fun StatusBanner(uiState: WifiConfigUiState) {
 //  小白看不懂，所以只在失败时给醒目的红色提示，默认折叠
 // =====================================================
 @Composable
-private fun DiagnosticsCard(uiState: WifiConfigUiState) {
+private fun DiagnosticsCard(strings: AppStrings, uiState: WifiConfigUiState) {
     var expanded by remember { mutableStateOf(false) }
     val diags = uiState.lastDiagnostics
     val failedCount = diags.count { !it.ok }
     val totalCount = diags.size
     val allOk = failedCount == 0
 
-    // 只有当展开或存在失败时才显示；全部成功默认折叠
     AnimatedVisibility(
         visible = expanded || failedCount > 0,
         enter = expandVertically() + fadeIn(),
@@ -909,17 +1035,14 @@ private fun DiagnosticsCard(uiState: WifiConfigUiState) {
                     Spacer(Modifier.size(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = if (allOk) "命令执行全部成功 ✓"
-                            else "有 $failedCount 条命令失败了（共 $totalCount 条）",
+                            text = if (allOk) strings.diagAllOk
+                            else strings.diagSomeFailed(failedCount, totalCount),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = if (allOk) SuccessGreen else ErrorRed
                         )
                         Text(
-                            text = if (allOk)
-                                "网络改好了～如果没有生效，可以开关一下飞行模式再看。"
-                            else
-                                "可以点开下面的详细日志，把截图发给开发者排查问题。",
+                            text = if (allOk) strings.diagAllOkSub else strings.diagFailedSub,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -931,7 +1054,7 @@ private fun DiagnosticsCard(uiState: WifiConfigUiState) {
                     IconButton(onClick = { expanded = !expanded }) {
                         Icon(
                             Icons.Default.ExpandMore,
-                            if (expanded) "收起" else "展开详情",
+                            if (expanded) strings.diagCollapse else strings.diagExpand,
                             modifier = Modifier.rotate(rotate)
                         )
                     }
@@ -973,11 +1096,12 @@ private fun DiagnosticsCard(uiState: WifiConfigUiState) {
 }
 
 // =====================================================
-//  预设方案卡片 & 对话框（重做视觉，chips 清爽化）
+//  预设方案卡片 & 对话框
 // =====================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PresetsCard(
+    strings: AppStrings,
     uiState: WifiConfigUiState,
     onCreate: () -> Unit,
     onRename: (id: String) -> Unit,
@@ -1018,19 +1142,19 @@ private fun PresetsCard(
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = "我的预设方案  ${presets.size}/$max",
+                        text = strings.presetTitle(presets.size, max),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "保存多套常用配置，一键切换。最多 $max 套。",
+                        strings.presetSubtitle(max),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.size(4.dp))
                 FilledTonalIconButton(onClick = onClearAll, enabled = presets.isNotEmpty()) {
-                    Icon(Icons.Default.ClearAll, contentDescription = "清空全部")
+                    Icon(Icons.Default.ClearAll, contentDescription = strings.presetClearAll)
                 }
                 FilledTonalButton(
                     onClick = onCreate,
@@ -1039,18 +1163,18 @@ private fun PresetsCard(
                 ) {
                     Icon(Icons.Default.Add, null, Modifier.size(16.dp))
                     Spacer(Modifier.size(4.dp))
-                    Text("另存为预设")
+                    Text(strings.presetSaveAs)
                 }
             }
 
             if (presets.isEmpty()) {
-                EmptyPresetsHint()
+                EmptyPresetsHint(strings = strings)
             } else {
-                // 预设方案：竖向列表（每行一个，方便逐行查看）
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     presets.forEach { p ->
                         val selected = uiState.selectedPresetId == p.id
                         PresetItem(
+                            strings = strings,
                             preset = p,
                             selected = selected,
                             onClick = { onLoad(p.id) },
@@ -1059,7 +1183,7 @@ private fun PresetsCard(
                         )
                     }
                     Text(
-                        text = "👆 点一下某一行 = 自动填入上面表单；✏️铅笔 = 改名；🗑️垃圾桶 = 删除",
+                        text = strings.presetFooterHint,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1070,7 +1194,7 @@ private fun PresetsCard(
 }
 
 @Composable
-private fun EmptyPresetsHint() {
+private fun EmptyPresetsHint(strings: AppStrings) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -1086,7 +1210,7 @@ private fun EmptyPresetsHint() {
         )
         Spacer(Modifier.size(10.dp))
         Text(
-            text = "还没有预设 —— 填好上面 5 个字段后，点「另存为预设」就能保存啦。",
+            text = strings.presetEmptyHint,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1096,6 +1220,7 @@ private fun EmptyPresetsHint() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PresetItem(
+    strings: AppStrings,
     preset: com.wificonfig.app.data.SavedPreset,
     selected: Boolean,
     onClick: () -> Unit,
@@ -1124,7 +1249,6 @@ private fun PresetItem(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左：图标
             Box(
                 Modifier
                     .size(36.dp)
@@ -1143,7 +1267,6 @@ private fun PresetItem(
                 )
             }
             Spacer(Modifier.size(10.dp))
-            // 中：名称 + 一行摘要
             Column(Modifier.weight(1f)) {
                 Text(
                     text = preset.name,
@@ -1161,7 +1284,7 @@ private fun PresetItem(
                 if (selected) {
                     Spacer(Modifier.size(3.dp))
                     Text(
-                        text = "✓ 已载入到表单",
+                        text = strings.presetLoadedTag,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
@@ -1169,13 +1292,12 @@ private fun PresetItem(
                 }
             }
             Spacer(Modifier.size(4.dp))
-            // 右：重命名 / 删除 两个按钮
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledTonalIconButton(
                     onClick = onRename,
                     modifier = Modifier.size(34.dp)
                 ) {
-                    Icon(Icons.Default.Edit, "重命名", modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Edit, strings.presetRename, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.size(4.dp))
                 FilledTonalIconButton(
@@ -1186,17 +1308,18 @@ private fun PresetItem(
                         contentColor = ErrorRed
                     )
                 ) {
-                    Icon(Icons.Default.Delete, "删除", modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Delete, strings.presetDelete, modifier = Modifier.size(16.dp))
                 }
             }
         }
     }
 }
 
-// ---------- 对话框们（基本保留原逻辑，加圆角润色） ----------
+// ---------- 对话框们 ----------
 
 @Composable
 private fun PresetCreateDialog(
+    strings: AppStrings,
     onCancel: () -> Unit,
     onConfirm: (name: String) -> Unit
 ) {
@@ -1204,15 +1327,15 @@ private fun PresetCreateDialog(
     AlertDialog(
         onDismissRequest = onCancel,
         icon = { Icon(Icons.Default.Folder, contentDescription = null) },
-        title = { Text("另存为预设") },
+        title = { Text(strings.dlgCreateTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("给这套配置起个名字（24 字以内）：")
+                Text(strings.dlgCreateSub)
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(24) },
-                    label = { Text("预设名称") },
-                    placeholder = { Text("如：家里主路由 2.4G / 公司 Wi-Fi") },
+                    label = { Text(strings.dlgCreateLabel) },
+                    placeholder = { Text(strings.dlgCreatePlaceholder) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
@@ -1224,19 +1347,20 @@ private fun PresetCreateDialog(
                 onClick = { onConfirm(name.trim()) },
                 shape = RoundedCornerShape(12.dp),
                 enabled = name.isNotBlank()
-            ) { Text("保存") }
+            ) { Text(strings.btnSave) }
         },
         dismissButton = {
             OutlinedButton(
                 onClick = onCancel,
                 shape = RoundedCornerShape(12.dp)
-            ) { Text("取消") }
+            ) { Text(strings.btnCancel) }
         }
     )
 }
 
 @Composable
 private fun PresetRenameDialog(
+    strings: AppStrings,
     currentName: String,
     onCancel: () -> Unit,
     onConfirm: (String) -> Unit
@@ -1245,12 +1369,12 @@ private fun PresetRenameDialog(
     AlertDialog(
         onDismissRequest = onCancel,
         icon = { Icon(Icons.Default.Edit, contentDescription = null) },
-        title = { Text("重命名预设") },
+        title = { Text(strings.dlgRenameTitle) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it.take(24) },
-                label = { Text("新名称（24 字以内）") },
+                label = { Text(strings.dlgRenameLabel) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -1261,16 +1385,17 @@ private fun PresetRenameDialog(
                 onClick = { onConfirm(name.trim()) },
                 shape = RoundedCornerShape(12.dp),
                 enabled = name.isNotBlank()
-            ) { Text("确定") }
+            ) { Text(strings.btnConfirm) }
         },
         dismissButton = {
-            OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text("取消") }
+            OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text(strings.btnCancel) }
         }
     )
 }
 
 @Composable
 private fun PresetDeleteDialog(
+    strings: AppStrings,
     presetName: String,
     onCancel: () -> Unit,
     onConfirm: () -> Unit
@@ -1278,8 +1403,8 @@ private fun PresetDeleteDialog(
     AlertDialog(
         onDismissRequest = onCancel,
         icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = ErrorRed) },
-        title = { Text("删除预设") },
-        text = { Text("确定删除「$presetName」吗？删了就找不回来啦。") },
+        title = { Text(strings.dlgDeleteTitle) },
+        text = { Text(strings.dlgDeleteMsg(presetName)) },
         confirmButton = {
             Button(
                 onClick = onConfirm,
@@ -1288,16 +1413,17 @@ private fun PresetDeleteDialog(
                     containerColor = ErrorRed,
                     contentColor = Color.White
                 )
-            ) { Text("确定删除") }
+            ) { Text(strings.btnDeleteConfirm) }
         },
         dismissButton = {
-            OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text("取消") }
+            OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text(strings.btnCancel) }
         }
     )
 }
 
 @Composable
 private fun PresetClearAllDialog(
+    strings: AppStrings,
     count: Int,
     onCancel: () -> Unit,
     onConfirm: () -> Unit
@@ -1305,8 +1431,8 @@ private fun PresetClearAllDialog(
     AlertDialog(
         onDismissRequest = onCancel,
         icon = { Icon(Icons.Default.ClearAll, contentDescription = null, tint = WarningOrange) },
-        title = { Text("清空全部预设") },
-        text = { Text("真的要删除全部 $count 套预设吗？此操作不可恢复哦。") },
+        title = { Text(strings.dlgClearTitle) },
+        text = { Text(strings.dlgClearMsg(count)) },
         confirmButton = {
             Button(
                 onClick = onConfirm,
@@ -1315,10 +1441,10 @@ private fun PresetClearAllDialog(
                     containerColor = WarningOrange,
                     contentColor = Color.White
                 )
-            ) { Text("全部清空") }
+            ) { Text(strings.btnClearAll) }
         },
         dismissButton = {
-            OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text("取消") }
+            OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(12.dp)) { Text(strings.btnCancel) }
         }
     )
 }
@@ -1332,10 +1458,9 @@ private fun PresetClearAllDialog(
 private fun PreviewScreen() {
     WifiConfigAppTheme {
         Surface(color = MaterialTheme.colorScheme.background) {
-            // 仅用于预览画布
             Box(Modifier.fillMaxSize().padding(16.dp)) {
                 Text(
-                    "🎨 UI 预览占位\n安装到手机上就能看到完整效果啦～",
+                    "🎨 UI Preview Placeholder\nInstall APK to device for full content.",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
