@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Wi-Fi Switcher</string>
+    <string name="mode_static">Static IP</string>
+    <string name="mode_dhcp">DHCP (Auto)</string>
+    <string name="label_ip_address">IP Address</string>
+    <string name="label_gateway">Gateway</string>
+    <string name="label_dns_primary">Primary DNS</string>
+    <string name="label_dns_secondary">Secondary DNS</string>
+    <string name="label_subnet_prefix">Subnet Prefix Length</string>
+    <string name="btn_save">Save Config</string>
+    <string name="btn_apply">Apply Now</string>
+    <string name="btn_switch_dhcp">Switch to DHCP</string>
+    <string name="hint_ip">e.g. 192.168.1.100</string>
+    <string name="hint_gateway">e.g. 192.168.1.1</string>
+    <string name="hint_dns">e.g. 8.8.8.8</string>
+    <string name="hint_subnet">e.g. 24</string>
+    <string name="status_idle">Ready</string>
+    <string name="status_applying">Applying config…</string>
+    <string name="status_success">Config applied successfully!</string>
+    <string name="status_failed">Failed to apply config: %1$s</string>
+    <string name="status_root_checking">Checking Root permission…</string>
+    <string name="status_root_granted">Root permission granted</string>
+    <string name="status_root_denied">No Root permission — cannot modify network config</string>
+    <string name="title_mode_select">Choose Config Mode</string>
+    <string name="title_current_config">Saved Config</string>
+    <string name="label_interface">Interface</string>
+</resources>

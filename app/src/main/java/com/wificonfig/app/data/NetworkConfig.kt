@@ -132,13 +132,23 @@ data class CommandDiagnostic(
 }
 
 /**
- * 应用结果
+ * 应用结果。
+ *   message     ：兼容已有的构造方式（单一语言）
+ *   messageFn   ：多语言消息构造函数；非 null 时优先使用它（可在语言切换时重新渲染）
  */
 data class ApplyResult(
     val success: Boolean,
     val message: String,
-    val diagnostics: List<CommandDiagnostic> = emptyList()
-)
+    val diagnostics: List<CommandDiagnostic> = emptyList(),
+    val messageFn: ((com.wificonfig.app.ui.AppStrings) -> String)? = null
+) {
+    /** 便捷构造：直接以 function 作为消息，message 字段会用一个 fallback（中文默认） */
+    constructor(
+        success: Boolean,
+        messageFn: (com.wificonfig.app.ui.AppStrings) -> String,
+        diagnostics: List<CommandDiagnostic> = emptyList()
+    ) : this(success, "", diagnostics, messageFn)
+}
 
 /**
  * 当前 Wi-Fi 接口信息

@@ -7,13 +7,36 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.wificonfig.app.ui.AppStrings
+import com.wificonfig.app.ui.EnStrings
+import com.wificonfig.app.ui.LanguageOption
+import com.wificonfig.app.ui.ZhStrings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.util.Locale
 
 /**
  * 全局单例 DataStore（Context 扩展属性）
  */
 val Context.wifiConfigDataStore: DataStore<Preferences> by preferencesDataStore(name = "wifi_config_prefs")
+
+/**
+ * 根据「用户选择」+「系统 Locale」解析出最终应该使用的 AppStrings：
+ *   用户选 system → 中文系统(Locale.CHINA / 语言 zh) → ZhStrings；其他 → EnStrings
+ *   用户选 zh → 强制中文
+ *   用户选 en → 强制英文
+ */
+fun resolveAppStrings(userChoice: LanguageOption, systemLocale: Locale): AppStrings {
+    val forceZh = when (userChoice) {
+        LanguageOption.ZH -> true
+        LanguageOption.EN -> false
+        LanguageOption.SYSTEM -> {
+            val lang = systemLocale.language.lowercase(Locale.ROOT)
+            lang == "zh"
+        }
+    }
+    return if (forceZh) ZhStrings() else EnStrings()
+}
 
 /**
  * 使用 Jetpack DataStore 持久化用户输入的静态网络配置
@@ -28,6 +51,7 @@ class PreferencesRepository(private val context: Context) {
         val DNS_SECONDARY = stringPreferencesKey("dns_secondary")
         val LAST_MODE = stringPreferencesKey("last_mode") // "STATIC" or "DHCP"
         val PRESETS_JSON = stringPreferencesKey("presets_json")  // 所有 SavedPreset 拼成一个 JSON 数组
+        val SELECTED_LANGUAGE = stringPreferencesKey("selected_language") // "system" / "zh" / "en"
     }
 
     companion object {
@@ -56,6 +80,23 @@ class PreferencesRepository(private val context: Context) {
         context.wifiConfigDataStore.data.map { prefs ->
             prefs[Keys.LAST_MODE] ?: MODE_DHCP
         }
+
+    /**
+     * 用户选择的语言（system/zh/en）；Flow 形式供 UI 观察
+     */
+    val languageOptionFlow: Flow<LanguageOption> =
+        context.wifiConfigDataStore.data.map { prefs ->
+            LanguageOption.fromStorage(prefs[Keys.SELECTED_LANGUAGE])
+        }
+
+    /**
+     * 保存用户选择的语言
+     */
+    suspend fun saveLanguageOption(option: LanguageOption) {
+        context.wifiConfigDataStore.edit { prefs ->
+            prefs[Keys.SELECTED_LANGUAGE] = option.storageValue
+        }
+    }
 
     /**
      * 保存一套静态网络配置
@@ -128,3 +169,4 @@ class PreferencesRepository(private val context: Context) {
         }
     }
 }
+

@@ -112,18 +112,34 @@ object NetworkConfigManager {
             }
 
             val ok = criticalFailed.isEmpty()
+            val failedCount = criticalFailed.size
+            val prio = RULE_PRIORITY
+            val ip = config.ipAddress
+            val prefix = config.subnetPrefix
+            val gw = config.gateway
+            val dns1 = config.dnsPrimary
+            val dns2 = config.dnsSecondary
+            // 保留 msg 字符串作为 fallback（老版本 / messageFn 为 null 时使用）；
+            // 同时提供 messageFn 以支持语言切换（AppStrings 是多语言抽象类）
             val dnsServers = buildString {
-                append(config.dnsPrimary)
-                if (config.dnsSecondary.isNotEmpty()) append('/').append(config.dnsSecondary)
+                append(dns1)
+                if (dns2.isNotEmpty()) append('/').append(dns2)
             }
             val msg = if (ok) {
-                "已应用到 $iface（MIUI 适配模式：Private DNS 已关闭 + NetworkAgent 已暂停 + DNAT 强制 DNS + 路由优先级 $RULE_PRIORITY）\n" +
-                        "IP: ${config.ipAddress}/${config.subnetPrefix}  网关: ${config.gateway}  DNS: $dnsServers\n" +
+                "已应用到 $iface（MIUI 适配模式：Private DNS 已关闭 + NetworkAgent 已暂停 + DNAT 强制 DNS + 路由优先级 $prio）\n" +
+                        "IP: $ip/$prefix  网关: $gw  DNS: $dnsServers\n" +
                         "若仍无法上网，请先手动关掉「Wi-Fi 助理 / 双 WLAN 加速」再重试一次。"
             } else {
-                "关键命令失败 ${criticalFailed.size} 条，请查看下方诊断日志（❌ 行），确认已授予 Root、接口名为 $iface 且已连接 Wi-Fi。"
+                "关键命令失败 $failedCount 条，请查看下方诊断日志（❌ 行），确认已授予 Root、接口名为 $iface 且已连接 Wi-Fi。"
             }
-            ApplyResult(ok, msg, diags)
+            val messageFn: (com.wificonfig.app.ui.AppStrings) -> String = { s ->
+                if (ok) {
+                    s.staticApplyOkMsg(iface, prio, ip, prefix, gw, dns1, dns2)
+                } else {
+                    s.staticApplyFailMsg(failedCount, iface)
+                }
+            }
+            ApplyResult(ok, msg, diags, messageFn)
         }
 
     private fun buildStaticIpCommands(iface: String, cfg: StaticNetworkConfig): List<String> {
@@ -171,12 +187,18 @@ object NetworkConfigManager {
         cmds += "ip link set $iface up || true"
 
         // -------- 5. 自定义路由表 + 高优先级 ip rule（覆盖系统 main 表里的 DHCP 路由）--------
+        // 首轮添加（接口刚 up，carrier 可能还没 ready，所以全部静默可选失败）
         cmds += "ip route add ${cfg.gateway}/32 dev $iface table $tableId 2>/dev/null || true"
         cmds += "ip route add $ifAddr dev $iface scope link table $tableId 2>/dev/null || true"
-        cmds += "ip route add default via ${cfg.gateway} dev $iface table $tableId"
+        cmds += "ip route add default via ${cfg.gateway} dev $iface table $tableId 2>/dev/null || true"
         // main 表也加一份（为了 ip route get 默认能走通，同时 rule 优先级更高兜底）
         cmds += "ip route del default dev $iface 2>/dev/null || true"
         cmds += "ip route add default via ${cfg.gateway} dev $iface 2>/dev/null || true"
+        // 关键兜底：main 表默认路由添加完成后，链路层一定 ready，再给自定义路由表补一遍所有路由
+        // 解决首轮 #27 报错 "RTNETLINK answers: Network is unreachable"（carrier 时序竞态问题）
+        cmds += "ip route add ${cfg.gateway}/32 dev $iface table $tableId 2>/dev/null || true"
+        cmds += "ip route add $ifAddr dev $iface scope link table $tableId 2>/dev/null || true"
+        cmds += "ip route add default via ${cfg.gateway} dev $iface table $tableId 2>/dev/null || true"
         cmds += "ip rule add from all iif lo lookup $tableId prio $RULE_PRIORITY 2>/dev/null || " +
                 "ip rule add from all lookup $tableId prio $RULE_PRIORITY"
 
@@ -218,20 +240,27 @@ object NetworkConfigManager {
     // ============== DHCP 还原（配合上面的适配方案） ==============
 
     suspend fun enableDhcp(iface: String): ApplyResult = withContext(Dispatchers.IO) {
-        if (iface.isEmpty()) return@withContext ApplyResult(false, "未能检测到 Wi-Fi 网络接口（wlan0 等）")
+        if (iface.isEmpty()) {
+            val messageFn: (com.wificonfig.app.ui.AppStrings) -> String = { it.dhcpNoIfaceMsg }
+            return@withContext ApplyResult(false, "未能检测到 Wi-Fi 网络接口（wlan0 等）", emptyList(), messageFn)
+        }
         val cmds = buildEnableDhcpCommands(iface)
         val (_, diags) = RootShell.executeDiagnosed(cmds)
 
         // 只要关键清理命令不出现致命错误就视为成功（svc 重启等返回值各厂商不同）
         val criticalFailed = diags.filter { !it.ok && (it.command.startsWith("iptables") || it.command.startsWith("ip rule") || it.command.startsWith("ip route")) }
         val ok = criticalFailed.isEmpty()
+        val failedCount = criticalFailed.size
         val msg = if (ok) {
             "已还原到 DHCP 模式（Private DNS 恢复 opportunistic、DNAT 规则已清理、NetworkAgent 已恢复、Wi-Fi 已自动重连一次）。\n" +
                     "若 10 秒后仍未获取 IP，请去系统 Wi-Fi 设置里手动断开再连接。"
         } else {
-            "DHCP 还原中关键命令失败 ${criticalFailed.size} 条，请查看下方诊断。"
+            "DHCP 还原中关键命令失败 $failedCount 条，请查看下方诊断。"
         }
-        ApplyResult(ok, msg, diags)
+        val messageFn: (com.wificonfig.app.ui.AppStrings) -> String = { s ->
+            if (ok) s.dhcpApplyOkMsg() else s.dhcpApplyFailMsg(failedCount)
+        }
+        ApplyResult(ok, msg, diags, messageFn)
     }
 
     private fun buildEnableDhcpCommands(iface: String): List<String> {
@@ -296,13 +325,13 @@ object NetworkConfigManager {
         val dnsJoined = dnsList.joinToString(" ")
         return buildString {
             append("( ")
-            append("cmd netd resolver setifdns $iface '' $dnsJoined ; ")
-            append("cmd netd resolver setdefaultif $iface 2>/dev/null ; ")
-            append("ndc resolver setifdns $iface '' $dnsJoined 2>/dev/null ; ")
-            append("ndc resolver setdefaultif $iface 2>/dev/null ; ")
-            append("ndc resolver setnetdns 1 '' $dnsJoined 2>/dev/null ; ")
-            append("ndc resolver setnetdns 100 '' $dnsJoined 2>/dev/null ; ")
-            append("ndc resolver setnetdns 101 '' $dnsJoined 2>/dev/null ; ")
+            // 注意：Android 10+ 开始移除了 cmd netd resolver setifdns / setdefaultif，会返回 "500 0 Command not recognized"
+            // 所以这里只保留 ndc 版（NDK wrapper，兼容性更好），全部加 2>/dev/null || true 静默可选失败
+            append("ndc resolver setifdns $iface '' $dnsJoined 2>/dev/null || true ; ")
+            append("ndc resolver setdefaultif $iface 2>/dev/null || true ; ")
+            append("ndc resolver setnetdns 1 '' $dnsJoined 2>/dev/null || true ; ")
+            append("ndc resolver setnetdns 100 '' $dnsJoined 2>/dev/null || true ; ")
+            append("ndc resolver setnetdns 101 '' $dnsJoined 2>/dev/null || true ; ")
             append("true )")
         }
     }

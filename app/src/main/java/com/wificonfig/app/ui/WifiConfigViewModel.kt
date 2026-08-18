@@ -1,6 +1,7 @@
 package com.wificonfig.app.ui
 
 import android.app.Application
+import android.content.res.Configuration
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wificonfig.app.data.ApplyResult
@@ -9,6 +10,8 @@ import com.wificonfig.app.data.PreferencesRepository
 import com.wificonfig.app.data.SavedPreset
 import com.wificonfig.app.data.StaticNetworkConfig
 import com.wificonfig.app.data.WifiInterfaceInfo
+import com.wificonfig.app.data.resolveAppStrings
+import java.util.Locale
 import java.util.UUID
 import com.wificonfig.app.util.NetworkConfigManager
 import com.wificonfig.app.util.RootShell
@@ -64,7 +67,10 @@ data class WifiConfigUiState(
     // 预设
     val presets: List<SavedPreset> = emptyList(),
     val selectedPresetId: String? = null,      // 当前选中的预设（chip 高亮）
-    val pendingPresetDialog: PresetDialog? = null
+    val pendingPresetDialog: PresetDialog? = null,
+    // 语言
+    val languageOption: LanguageOption = LanguageOption.SYSTEM,
+    val showLanguageDialog: Boolean = false
 )
 
 class WifiConfigViewModel(application: Application) : AndroidViewModel(application) {
@@ -84,7 +90,38 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
     private val _snackbarChannel = Channel<String>(Channel.BUFFERED)
     val snackbarFlow: Flow<String> = _snackbarChannel.receiveAsFlow()
 
+    // ==================== 语言：当前 AppStrings ====================
+    /** 当前系统 Locale（取 App 的 Configuration）；后续也可以通过 onConfigurationChanged 更新 */
+    private val _systemLocale = MutableStateFlow(getSystemLocale())
+    val systemLocale: StateFlow<Locale> = _systemLocale.asStateFlow()
+
+    /** 最终解析出来的 AppStrings：结合「用户选择 + 系统 Locale」 */
+    val appStringsState: StateFlow<AppStrings> =
+        combine(
+            repository.languageOptionFlow,
+            systemLocale
+        ) { opt, loc -> resolveAppStrings(opt, loc) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, resolveAppStrings(LanguageOption.SYSTEM, getSystemLocale()))
+
+    /** 当前使用的语言选项（system/zh/en），放 UiState 供对话框勾选 */
+    private val _languageOptionState: StateFlow<LanguageOption> =
+        repository.languageOptionFlow.stateIn(viewModelScope, SharingStarted.Eagerly, LanguageOption.SYSTEM)
+
+    /** 上一次状态/消息的「构造函数」，用于语言切换时重新渲染 */
+    private var statusFn: (AppStrings) -> OperationStatus = { OperationStatus.Idle }
+    private var statusMsgFn: (AppStrings) -> String = { s -> s.statusIdleReady }
+    private var lastDiagnosticsMemo: List<CommandDiagnostic> = emptyList()
+
     init {
+        // 语言切换 → 重算 appStrings → 重绘 statusMessage / OperationStatus（带翻译的 message）
+        viewModelScope.launch {
+            appStringsState.collect { newStrings ->
+                refreshStatusWithStrings(newStrings)
+                // 同时把 languageOption 同步到 UiState
+                _uiState.update { it.copy(languageOption = _languageOptionState.value) }
+            }
+        }
+
         // 加载本地保存的配置
         viewModelScope.launch {
             launch {
@@ -122,32 +159,79 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // ============ 语言：对外 actions ============
+    fun openLanguageDialog() {
+        _uiState.update { it.copy(showLanguageDialog = true) }
+    }
+
+    fun dismissLanguageDialog() {
+        _uiState.update { it.copy(showLanguageDialog = false) }
+    }
+
+    fun selectLanguage(option: LanguageOption) {
+        viewModelScope.launch {
+            repository.saveLanguageOption(option)
+            dismissLanguageDialog()
+            _snackbarChannel.send(
+                when (option) {
+                    LanguageOption.SYSTEM -> appStringsState.value.langSnackbarFollowSystem
+                    LanguageOption.ZH -> appStringsState.value.langSnackbarZh
+                    LanguageOption.EN -> appStringsState.value.langSnackbarEn
+                }
+            )
+        }
+    }
+
     // ============== 公共方法供 UI 调用 ==============
 
     fun checkRootAndDetectInterface() {
         viewModelScope.launch {
-            setStatus(OperationStatus.CheckingRoot, "正在检查 Root 权限…")
+            setStatus(
+                statusFn = { s -> OperationStatus.CheckingRoot },
+                msgFn = { s -> s.statusCheckingRoot }
+            )
             val hasRoot = RootShell.checkRootAccess()
             if (hasRoot) {
-                setStatus(OperationStatus.RootGranted, "Root 权限已获取")
+                setStatus(
+                    statusFn = { s -> OperationStatus.RootGranted },
+                    msgFn = { s -> s.statusRootGranted }
+                )
                 _uiState.update { it.copy(rootChecked = true, rootGranted = true) }
                 detectInterface()
             } else {
-                setStatus(OperationStatus.RootDenied, "未获取 Root 权限，无法修改网络配置")
+                setStatus(
+                    statusFn = { s -> OperationStatus.RootDenied },
+                    msgFn = { s -> s.statusRootDenied }
+                )
                 _uiState.update { it.copy(rootChecked = true, rootGranted = false) }
-                _snackbarChannel.send("未获取 Root 权限。请确认设备已 Root，并在弹窗中授予本应用权限。")
+                _snackbarChannel.send(appStringsState.value.snackbarRootNotGranted)
             }
         }
     }
 
     private suspend fun detectInterface() {
-        setStatus(OperationStatus.LoadingInterface, "正在探测 Wi-Fi 接口…")
+        setStatus(
+            statusFn = { s -> OperationStatus.LoadingInterface },
+            msgFn = { s -> s.statusDetectingIface }
+        )
         val info = NetworkConfigManager.detectWifiInterface()
         _uiState.update { it.copy(ifaceInfo = info) }
         if (info.ifName.isEmpty()) {
-            setStatus(OperationStatus.Failed("未检测到网络接口。请确保 Wi-Fi 已连接。"), "")
+            setStatus(
+                statusFn = { s ->
+                    val m = s.statusNoIface
+                    OperationStatus.Failed(m)
+                },
+                msgFn = { s -> s.statusNoIface },
+                diagnosticsFetcher = { emptyList() }
+            )
         } else {
-            setStatus(OperationStatus.Idle, "就绪：接口 ${info.ifName}（当前 IP: ${info.currentIp.ifBlank { "-" }}）")
+            setStatus(
+                statusFn = { s -> OperationStatus.Idle },
+                msgFn = { s ->
+                    s.statusReadyWithIface(info.ifName, info.currentIp.ifBlank { "-" })
+                }
+            )
         }
     }
 
@@ -184,8 +268,12 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
                 dnsSecondary = state.dnsSecondary.trim()
             )
             repository.saveStaticConfig(cfg)
-            setStatus(OperationStatus.Success("已保存"), "配置已保存到本地")
-            _snackbarChannel.send("配置已保存")
+            val s = appStringsState.value
+            setStatus(
+                statusFn = { ss -> OperationStatus.Success(ss.msgSaved) },
+                msgFn = { ss -> ss.statusSavedLocal }
+            )
+            _snackbarChannel.send(s.snackbarConfigSaved)
         }
     }
 
@@ -193,7 +281,7 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
         val state = _uiState.value
         if (!state.rootGranted) {
             viewModelScope.launch {
-                _snackbarChannel.send("请先授予 Root 权限后再应用配置")
+                _snackbarChannel.send(appStringsState.value.snackbarApplyNeedRootFirst)
                 checkRootAndDetectInterface()
             }
             return
@@ -216,13 +304,16 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
                 dnsSecondary = state.dnsSecondary.trim()
             )
             if (!cfg.isFilled()) {
-                _snackbarChannel.send("静态配置不完整，请填写 IP、网关与主 DNS")
+                _snackbarChannel.send(appStringsState.value.snackbarStaticIncomplete)
                 return@launch
             }
             // 先保存一次
             repository.saveStaticConfig(cfg)
 
-            setStatus(OperationStatus.Applying, "正在应用静态 IP 配置…（最长等待 15s / 单命令超时 3~5s）")
+            setStatus(
+                statusFn = { s -> OperationStatus.Applying },
+                msgFn = { s -> s.statusApplyingStatic }
+            )
             val iface = state.ifaceInfo.ifName.ifBlank {
                 // 重新检测一次
                 val info = NetworkConfigManager.detectWifiInterface()
@@ -234,26 +325,27 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
                     NetworkConfigManager.applyStaticIp(iface, cfg)
                 }
             } catch (e: TimeoutCancellationException) {
-                ApplyResult(
-                    false,
-                    "应用静态 IP 超时（超过 15 秒）。请展开下方诊断日志查看哪一条命令卡住了，截图发给作者。" +
-                            "已做单命令级超时兜底：若你仍能看到下面的诊断条目，则说明某些命令累计超过了总时长。",
-                    _uiState.value.lastDiagnostics
-                )
+                val diag = _uiState.value.lastDiagnostics
+                val fnMsg: (AppStrings) -> String = { s -> s.statusApplyStaticTimeout }
+                ApplyResult(false, fnMsg, diag)
             } catch (t: Throwable) {
-                ApplyResult(
-                    false,
-                    "应用静态 IP 异常：${t.javaClass.simpleName}: ${t.message ?: "Unknown"}",
-                    _uiState.value.lastDiagnostics
-                )
+                val diag = _uiState.value.lastDiagnostics
+                val fnMsg: (AppStrings) -> String = { s ->
+                    s.statusApplyStaticException(t.javaClass.simpleName, t.message ?: "Unknown")
+                }
+                ApplyResult(false, fnMsg, diag)
             }
-            handleApplyResult(result, "静态 IP 配置应用成功")
+            val successMsgFn: (AppStrings) -> String = { s -> s.statusStaticAppliedOk }
+            handleApplyResult(result, successMsgFn)
         }
     }
 
     private fun applyDhcpConfig() {
         viewModelScope.launch {
-            setStatus(OperationStatus.Applying, "正在切换到 DHCP 模式…（最长等待 20s，因为会自动重启 Wi-Fi）")
+            setStatus(
+                statusFn = { s -> OperationStatus.Applying },
+                msgFn = { s -> s.statusApplyingDhcp }
+            )
             val state = _uiState.value
             val iface = state.ifaceInfo.ifName.ifBlank {
                 val info = NetworkConfigManager.detectWifiInterface()
@@ -266,52 +358,79 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
                     NetworkConfigManager.enableDhcp(iface)
                 }
             } catch (e: TimeoutCancellationException) {
-                ApplyResult(
-                    false,
-                    "切换 DHCP 超时（超过 20 秒）。通常是因为 `svc wifi disable; sleep 2; svc wifi enable` " +
-                            "被 MIUI 权限拦截。你可以手动关 Wi-Fi 再开模拟 DHCP 重连；或者展开下方诊断定位具体卡住的命令。",
-                    _uiState.value.lastDiagnostics
-                )
+                val diag = _uiState.value.lastDiagnostics
+                val fnMsg: (AppStrings) -> String = { s -> s.statusDhcpTimeout }
+                ApplyResult(false, fnMsg, diag)
             } catch (t: Throwable) {
-                ApplyResult(
-                    false,
-                    "切换 DHCP 异常：${t.javaClass.simpleName}: ${t.message ?: "Unknown"}",
-                    _uiState.value.lastDiagnostics
-                )
+                val diag = _uiState.value.lastDiagnostics
+                val fnMsg: (AppStrings) -> String = { s ->
+                    s.statusDhcpException(t.javaClass.simpleName, t.message ?: "Unknown")
+                }
+                ApplyResult(false, fnMsg, diag)
             }
-            handleApplyResult(result, "已切换到 DHCP 模式，等待自动获取…")
+            val successMsgFn: (AppStrings) -> String = { s -> s.statusDhcpAppliedOk }
+            handleApplyResult(result, successMsgFn)
         }
     }
 
-    private suspend fun handleApplyResult(result: ApplyResult, successMsg: String) {
+    private suspend fun handleApplyResult(
+        result: ApplyResult,
+        successMsgFn: (AppStrings) -> String
+    ) {
         val diag = result.diagnostics
+        // 注意：ApplyResult.message 现在可能是 String 或 function —— 我们在 data 包把它改成 Any/或者统一用 function。
+        // 为了最小改动，我们用 ApplyResult.messageFn 字段（(AppStrings)->String?），若为 null 则回退到 message 字段。
+        val msgFn = result.messageFn ?: { _: AppStrings -> result.message }
+
         if (result.success) {
-            setStatus(OperationStatus.Success(result.message, diag), successMsg, diag)
-            _snackbarChannel.send(result.message)
-            // 善意提醒：系统设置界面没同步是正常现象，底层已生效
-            // 放在第二条，Snackbar 会自动排队在"成功"消息消失后显示
-            _snackbarChannel.send(
-                buildString {
-                    append("💡 小提醒：系统设置里的 Wi-Fi 页面显示的 IP/网关/DNS 可能暂时没变化，")
-                    append("但安卓底层的网络设置其实已经改好并生效啦 ✅。")
-                    append("要是想让系统设置页面也同步显示，只需关闭再打开 Wi-Fi，重连一次就好。")
-                }
+            setStatus(
+                statusFn = { s -> OperationStatus.Success(msgFn(s), diag) },
+                msgFn = successMsgFn,
+                diagnosticsFetcher = { diag }
             )
+            _snackbarChannel.send(msgFn(appStringsState.value))
+            // 善意提醒：系统设置界面没同步是正常现象，底层已生效
+            _snackbarChannel.send(appStringsState.value.snackbarSystemSettingsNotice)
             // 应用成功后重新探测接口信息以便 UI 展示
             val info = NetworkConfigManager.detectWifiInterface()
             _uiState.update { it.copy(ifaceInfo = info) }
         } else {
-            setStatus(OperationStatus.Failed(result.message, diag), result.message, diag)
-            _snackbarChannel.send(result.message)
+            setStatus(
+                statusFn = { s -> OperationStatus.Failed(msgFn(s), diag) },
+                msgFn = msgFn,
+                diagnosticsFetcher = { diag }
+            )
+            _snackbarChannel.send(msgFn(appStringsState.value))
         }
     }
 
-    private fun setStatus(status: OperationStatus, message: String, diagnostics: List<CommandDiagnostic> = emptyList()) {
+    /**
+     * 核心：设置「可翻译」的状态与消息。
+     *   @param statusFn 根据 AppStrings 生成最终 OperationStatus（含其内部 message 字段）
+     *   @param msgFn    根据 AppStrings 生成 statusMessage 字符串
+     *   @param diagnosticsFetcher 返回诊断列表（此为 List，非函数，因为它不是翻译相关）
+     */
+    private fun setStatus(
+        statusFn: (AppStrings) -> OperationStatus,
+        msgFn: (AppStrings) -> String,
+        diagnosticsFetcher: () -> List<CommandDiagnostic> = { emptyList() }
+    ) {
+        this.statusFn = statusFn
+        this.statusMsgFn = msgFn
+        val diag = diagnosticsFetcher()
+        if (diag.isNotEmpty()) this.lastDiagnosticsMemo = diag
+        refreshStatusWithStrings(appStringsState.value)
+    }
+
+    /** 用当前 AppStrings 重新渲染一次状态与消息（语言切换时调用） */
+    private fun refreshStatusWithStrings(strings: AppStrings) {
+        val status = statusFn(strings)
+        val msg = statusMsgFn(strings)
         _uiState.update {
             it.copy(
                 status = status,
-                statusMessage = message,
-                lastDiagnostics = diagnostics.ifEmpty { it.lastDiagnostics }
+                statusMessage = msg,
+                lastDiagnostics = lastDiagnosticsMemo.ifEmpty { it.lastDiagnostics }
             )
         }
     }
@@ -325,12 +444,14 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
     fun openCreatePresetDialog() {
         val s = _uiState.value
         if (!currentStaticConfig().isFilled()) {
-            viewModelScope.launch { _snackbarChannel.send("请先把上方 5 个字段填完整，再另存为预设。") }
+            viewModelScope.launch { _snackbarChannel.send(appStringsState.value.snackbarPresetFillFirst) }
             return
         }
         if (s.presets.size >= SavedPreset.MAX_PRESETS) {
             viewModelScope.launch {
-                _snackbarChannel.send("已达上限 ${SavedPreset.MAX_PRESETS} 套预设。请先删除不常用的。")
+                _snackbarChannel.send(
+                    appStringsState.value.snackbarPresetMaxReached(SavedPreset.MAX_PRESETS)
+                )
             }
             return
         }
@@ -358,19 +479,19 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
     fun confirmCreatePreset(nameInput: String) {
         viewModelScope.launch {
             val cfg = currentStaticConfig()
+            val s = appStringsState.value
             if (!cfg.isFilled()) {
-                _snackbarChannel.send("表单内容不完整，无法另存为预设。")
+                _snackbarChannel.send(s.snackbarPresetIncomplete)
                 closePresetDialog()
                 return@launch
             }
             val name = nameInput.trim().ifBlank {
-                // 默认名："预设 #(count+1)"
                 val n = _uiState.value.presets.size + 1
-                "预设 $n"
+                s.defaultPresetName(n)
             }
             val dup = _uiState.value.presets.firstOrNull { it.name == name }
             if (dup != null && dup.config.contentEquals(cfg)) {
-                _snackbarChannel.send("内容相同且同名的预设已存在（「$name」），无需重复保存。")
+                _snackbarChannel.send(s.snackbarPresetDupExists(name))
                 closePresetDialog()
                 return@launch
             }
@@ -378,10 +499,12 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
             val preset = SavedPreset(id = id, name = name, config = cfg, createdAt = System.currentTimeMillis())
             val ok = repository.addPreset(preset)
             if (ok) {
-                _snackbarChannel.send("已保存预设「$name」（${_uiState.value.presets.size + 1}/${SavedPreset.MAX_PRESETS}）")
+                _snackbarChannel.send(
+                    s.snackbarPresetSaved(name, _uiState.value.presets.size + 1, SavedPreset.MAX_PRESETS)
+                )
                 _uiState.update { it.copy(selectedPresetId = id) }
             } else {
-                _snackbarChannel.send("保存失败：已达 ${SavedPreset.MAX_PRESETS} 套上限，或 ID 冲突。")
+                _snackbarChannel.send(s.snackbarPresetSaveFail(SavedPreset.MAX_PRESETS))
             }
             closePresetDialog()
         }
@@ -389,12 +512,13 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
 
     fun confirmRenamePreset(id: String, newNameInput: String) {
         viewModelScope.launch {
+            val s = appStringsState.value
             val newName = newNameInput.trim().ifBlank {
-                _snackbarChannel.send("新名称不能为空。")
+                _snackbarChannel.send(s.snackbarPresetRenameEmpty)
                 return@launch
             }
             repository.renamePreset(id, newName)
-            _snackbarChannel.send("预设已重命名为「$newName」")
+            _snackbarChannel.send(s.snackbarPresetRenamed(newName))
             closePresetDialog()
         }
     }
@@ -402,7 +526,7 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
     fun confirmDeletePreset(id: String) {
         viewModelScope.launch {
             repository.deletePreset(id)
-            _snackbarChannel.send("预设已删除")
+            _snackbarChannel.send(appStringsState.value.snackbarPresetDeleted)
             closePresetDialog()
         }
     }
@@ -411,7 +535,7 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             repository.clearAllPresets()
             _uiState.update { it.copy(selectedPresetId = null) }
-            _snackbarChannel.send("已清空全部预设")
+            _snackbarChannel.send(appStringsState.value.snackbarPresetAllCleared)
             closePresetDialog()
         }
     }
@@ -433,7 +557,7 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             repository.saveLastMode(PreferencesRepository.MODE_STATIC)
             repository.saveStaticConfig(p.config)
-            _snackbarChannel.send("已载入预设「${p.name}」，已自动切到静态模式。")
+            _snackbarChannel.send(appStringsState.value.snackbarPresetLoaded(p.name))
         }
     }
 
@@ -449,5 +573,16 @@ class WifiConfigViewModel(application: Application) : AndroidViewModel(applicati
             dnsPrimary = s.dnsPrimary.trim(),
             dnsSecondary = s.dnsSecondary.trim()
         )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getSystemLocale(): Locale {
+        val app = getApplication<Application>()
+        val config: Configuration = app.resources.configuration
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            config.locales[0]
+        } else {
+            config.locale
+        } ?: Locale.getDefault()
     }
 }
