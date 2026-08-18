@@ -11,7 +11,16 @@
 > **Modify the currently-connected Wi-Fi network's IP / Gateway / Primary DNS / Secondary DNS on the fly**,  
 > with one-tap switching between **static IP mode** and **automatic DHCP mode**,  
 > plus **MIUI 14 (Xiaomi / Redmi) specific compatibility layer** to fix the two common pain points:  
-> "the progress bar hangs forever" and "settings appear applied but are not actually effective".
+> "the progress bar hangs forever" and "settings appear applied but are not actually effective".  
+> **🌐 Built-in language switch (Chinese / English / Follow system)**: Auto-defaults to Chinese on Chinese-language systems, English on all others; manually override any time in-app.**
+
+---
+
+## 📦 Latest Release Download (Recommended)
+
+👉 **Direct APK download for v0.0.2 (latest)**:  
+[https://github.com/Kanon1982/WifiSwitcher/releases/tag/v0.0.2](https://github.com/Kanon1982/WifiSwitcher/releases/tag/v0.0.2)  
+Under **Assets → app-debug.apk** (~53 MB).
 
 ---
 
@@ -19,8 +28,9 @@
 
 | Feature | Description |
 |---------|-------------|
+| 🌐 **Multi-language** | **Chinese / English / Follow system** three options: Auto-defaults to Chinese on Chinese-language systems, English otherwise; tap the 🌐 icon on the top app bar to open a switch dialog; preference persisted via Jetpack DataStore; takes effect immediately — no restart needed |
 | 🧭 **Dual Mode Switch** | 🟢 **DHCP Auto (Recommended)**: revert to router-allocated settings, zero configuration required<br>🔵 **Static IP Manual Mode**: fill in IP / prefix / gateway / primary & secondary DNS yourself |
-| 💾 **Persistent Storage** | Uses **Jetpack DataStore** (replacing the deprecated SharedPreferences) to remember your last configuration, auto-restored on next launch |
+| 💾 **Persistent Storage** | Uses **Jetpack DataStore** (replacing the deprecated SharedPreferences) to remember your last configuration, language preference, and preset list — auto-restored on next launch |
 | 📁 **Up to 20 Saved Presets** | Vertical card list to manage common networks (Home / Office / Dorm / Lab etc.), one preset per row, click to load into the form |
 | ⚡ **Root Shell Timeout Guard** | Every command runs in its own `su` session with 3~5 second soft/hard timeout; an additional 15 second global timeout **prevents the progress bar from getting stuck forever** |
 | 🛠️ **MIUI 14 Compatibility Layer** | Automatically disables Private DNS, pauses NetworkAgent, installs custom routing tables + high-priority ip rules, and falls back to `iptables -t nat DNAT` to force DNS — preventing MIUI from silently overwriting root-level changes |
@@ -43,9 +53,11 @@
 
 ### 1️⃣ Install the APK
 
-Option A — Build yourself (recommended): follow the steps under [🧰 Building a Debug APK](#-building-a-debug-apk) to generate `app-debug.apk`, then copy it to your phone and install.
+Option A — **Direct Release APK download (fastest & recommended)**: click the link under 📦 Latest Release Download above, save `app-debug.apk` to your phone and install (enable "Install from unknown sources" if prompted by Android).
 
-Option B — If you downloaded a prebuilt APK from GitHub Releases or GitHub Actions, simply tap it. Enable "Install from unknown sources" if prompted by Android.
+Option B — Build yourself (recommended): follow the steps under [🧰 Building a Debug APK](#-building-a-debug-apk) to generate `app-debug.apk`, then copy it to your phone and install.
+
+Option C — If you downloaded a prebuilt APK from GitHub Releases or GitHub Actions, simply tap it. Enable "Install from unknown sources" if prompted by Android.
 
 ### 2️⃣ Step-by-step Flow (for beginners)
 
@@ -53,6 +65,8 @@ Option B — If you downloaded a prebuilt APK from GitHub Releases or GitHub Act
 Launch the App
     ↓
 Tap "Allow" in the root permission dialog (the top card will turn green with ✓)
+    ↓
+(Optional) Top bar 🌐 icon → pick a language: Follow System / Chinese / English
     ↓
 Choose a mode:
   🟢 Green "DHCP Auto Mode" → simply tap the big green button "✓ Switch Back to Auto Mode"
@@ -70,29 +84,56 @@ Wait a few seconds. Two Snackbars appear: one saying "Success", then a longer fr
 > (Screenshot placeholder — run the App yourself and capture screenshots to populate this section)
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ Top Bar: "Wi-Fi Config" + subtitle                     │
-├──────────────────────────────────────────────────────┤
-│ 【Current Status Card】Root ✓ + Wi-Fi iface + IP/DNS     │
-├──────────────────────────────────────────────────────┤
-│ 【Two Large Mode Cards】🟢DHCP    🔵Static IP            │
-├──────────────────────────────────────────────────────┤
-│ Conditional expand area:                               │
-│   - if DHCP → green hint "Auto mode selected"          │
-│   - if Static → ①IP ②Gateway ③DNS grouped form + presets│
-├──────────────────────────────────────────────────────┤
-│ 【Bottom Big Green Button】Apply / Switch Back to Auto   │
-└──────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ Top Bar: "Wi-Fi Config" + subtitle             🌐 (Lang switch)│
+├───────────────────────────────────────────────────────────────┤
+│ 【Current Status Card】Root ✓ + Wi-Fi iface + IP/DNS              │
+├───────────────────────────────────────────────────────────────┤
+│ 【Two Large Mode Cards】🟢DHCP    🔵Static IP                     │
+├───────────────────────────────────────────────────────────────┤
+│ Conditional expand area:                                          │
+│   - if DHCP → green hint "Auto mode selected"                     │
+│   - if Static → ①IP ②Gateway ③DNS grouped form + presets list     │
+├───────────────────────────────────────────────────────────────┤
+│ 【Bottom Big Green Button】Apply / Switch Back to Auto             │
+└───────────────────────────────────────────────────────────────┘
 ```
 
+- **Language switcher**: tap the 🌐 icon on the top-right app bar. A dialog opens with three choices: *Follow System* (default) / *Chinese* / *English*. All UI and bottom Snackbars re-render in the new language instantly.
 - **Preset List**: vertical layout, one preset per row — icon + name on the left, summary in the middle, pencil (rename) / trash (delete) buttons on the right.
 - **Diagnostics Log**: hidden by default. Only appears with a red border when one or more commands fail; tap the chevron to expand and inspect per-command stdout / stderr (useful for troubleshooting — take a screenshot and send it to the developer).
+
+---
+
+## 📝 Changelog
+
+### v0.0.2 — 2026-08-19
+
+**✨ New Features**
+- 🌐 **Multi-language support**: All UI, buttons, dialogs, status, errors, and bottom Snackbars are fully localized (Chinese + English); defaults to Chinese on Chinese-language systems, English on all others
+- 🌐 **In-app language switcher**: New 🌐 icon on the top app bar opens a dialog with *Follow System / Chinese / English* options. Preference persisted via Jetpack DataStore; takes effect immediately — no restart required
+
+**🐛 Fixes**
+- Fixed `RTNETLINK answers: Network is unreachable` when "Apply"-ing a saved Static IP preset: Reordered the main-table default-route step before the table-119 ip rule / route / DNAT setup; non-fatal table-119 failures are now silently absorbed so the overall apply still succeeds
+- Fixed `500 0 Command not recognized` during Apply: Removed the `cmd netd resolver` command (no longer available on Android 13+ / some newer ROMs); kept `ndc resolver setnetdns` and `ndc resolver setdnsmark` only, and DNS-step failures are now downgraded to warnings (they no longer abort the overall apply)
+- **Fixed "Snackbar still shows Chinese after switching to English" (key fix)**: Added `ApplyResult.messageFn` — a language-agnostic lazy template `(AppStrings) -> String` that replaces the hardcoded Chinese `message` field. `WifiConfigViewModel.handleApplyResult` now always prefers `messageFn(appStringsState.value)` so every success/error Snackbar is re-rendered in the current language, including results produced before the last language switch
+- DHCP-mode error `"No Wi-Fi interface (wlan0 etc.) detected"` is now localized (previously Chinese-only)
+
+**🏗️ Build & Tooling**
+- Switched Gradle wrapper download to Tencent Cloud mirror in `gradle-wrapper.properties`, eliminating wrapper-download timeouts frequently seen in China
+
+### v0.0.1 — 2026-08-19
+
+- Initial release: Dual mode (DHCP / Static IP), up-to-20 saved presets, Root Shell timeout guard, MIUI 14 compatibility layer, semantic beginner-friendly UI
+- Added Chinese README.md and English README.en.md with language cross-links
 
 ---
 
 ## 🧰 Building a Debug APK
 
 This repo ships the Gradle Wrapper (`gradlew.bat`) — only **JDK 17** + **Android SDK** are required, no separate Gradle installation needed. Android Studio is optional.
+
+> 💡 **Tip for users in China**: The Gradle download URL in `gradle-wrapper.properties` has been pre-switched to a Tencent Cloud mirror. First-time Gradle 8.5 download will be significantly faster than the default `services.gradle.org` — no manual changes needed.
 
 ### Build on Windows (PowerShell)
 
@@ -134,16 +175,17 @@ WifiSwitcher/
 │       │   ├── WifiConfigApplication.kt
 │       │   ├── MainActivity.kt       # Single Compose Activity entry point
 │       │   ├── data/
-│       │   │   ├── NetworkConfig.kt          # Data classes: StaticNetworkConfig, SavedPreset, etc.
-│       │   │   └── PreferencesRepository.kt  # DataStore persistence (settings + preset list)
+│       │   │   ├── NetworkConfig.kt          # Data classes: StaticNetworkConfig, SavedPreset, ApplyResult, etc.
+│       │   │   └── PreferencesRepository.kt  # DataStore persistence (settings + preset list + language pref)
 │       │   ├── ui/
-│       │   │   ├── WifiConfigScreen.kt       # Main UI page (single Jetpack Compose screen)
-│       │   │   ├── WifiConfigViewModel.kt    # ViewModel: state machine + business logic
+│       │   │   ├── Strings.kt                # i18n: AppStrings abstract class + ZhStrings / EnStrings impls
+│       │   │   ├── WifiConfigScreen.kt       # Main UI page (single Compose screen) + Language switch Dialog
+│       │   │   ├── WifiConfigViewModel.kt    # ViewModel: state machine + appStringsState language flow + BL
 │       │   │   └── theme/                    # Color / Theme / Typography
 │       │   └── util/
 │       │       ├── RootShell.kt              # Root executor (one su per command + timeout)
-│       │       └── NetworkConfigManager.kt   # Actual network changes: static IP / DHCP / MIUI layer
-│       └── res/                              # Resources: strings, colors, theme, launcher icons
+│       │       └── NetworkConfigManager.kt   # Actual net changes: static IP / DHCP / MIUI / messageFn
+│       └── res/                              # Resources: strings (incl. values-en/), colors, theme, icons
 ├── build.gradle.kts                  # Project-level Gradle config (Kotlin / Compose plugin versions)
 ├── settings.gradle.kts               # Project name, module includes
 ├── gradle.properties                 # Global Gradle properties (non-transitive R classes, Jetifier etc.)
@@ -163,6 +205,7 @@ WifiSwitcher/
 | **UI** | **Jetpack Compose BOM 2024.06.00** (Material 3) |
 | **Architecture** | Single Activity + MVVM (`ViewModel` + `StateFlow`) |
 | **Persistence** | **Jetpack DataStore Preferences** (replacing SharedPreferences) |
+| **i18n / L10n** | `AppStrings` abstract class + `ZhStrings` / `EnStrings` implementations; `values-en/strings.xml` at Android resources layer; user preference persisted in Jetpack DataStore |
 | **Async** | **Kotlin Coroutines + Flow**, `viewModelScope` + `withTimeout` dual-level timeout protection |
 | **Root Execution** | `ProcessBuilder("su", "-c", ...)` one-command-per-session + `waitFor(timeout)` to avoid blocking |
 | **Build Tool** | Gradle 8.5 (via Gradle Wrapper, no local Gradle install required) + Kotlin DSL |
@@ -208,6 +251,13 @@ WifiSwitcher/
 <summary>5. Why are presets capped at 20?</summary>
 
 > A typical casual user only switches between 2~5 networks (Home 2.4G / 5G / Office / Dorm / Café). 20 is far beyond daily needs and prevents the preset list from becoming unmanageable. The limit is defined as the constant `SavedPreset.MAX_PRESETS = 20` in [NetworkConfig.kt](app/src/main/java/com/wificonfig/app/data/NetworkConfig.kt) — developers can freely change it.
+
+</details>
+
+<details>
+<summary>6. How do I switch languages? Do I need to restart the App after switching?</summary>
+
+> Tap the **🌐 language icon** on the top-right app bar to open the switch dialog. Three options are available: **Follow System (default) / Chinese / English**. Your choice takes effect **immediately with no restart required**: all UI strings, buttons, dialog titles, bottom Snackbars, status messages, and errors are instantly re-rendered in the newly selected language.
 
 </details>
 
